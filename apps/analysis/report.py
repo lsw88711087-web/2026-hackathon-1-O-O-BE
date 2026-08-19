@@ -50,20 +50,21 @@ def build_payload(
 
 
 def _character_of(type_code: str) -> dict:
-    """⑦ 캐릭터 이미지 매핑. 사전 제작 16장이라 조회 한 번으로 끝난다."""
+    """⑦ 캐릭터 조회. 이름과 한 줄 설명만 쓴다.
+
+    이미지는 내려주지 않는다. 사전 제작 16장은 사용자 사진 기반 화보로 대체됐다.
+    """
     character = Character.objects.filter(pk=type_code).first()
     if character is None:
         return {
             "type_code": type_code,
             "name": UNKNOWN_CHARACTER_NAME,
             "one_liner": UNKNOWN_CHARACTER_ONE_LINER,
-            "image_url": "",
         }
     return {
         "type_code": character.type_code,
         "name": character.name,
         "one_liner": character.one_liner,
-        "image_url": character.image_url,
     }
 
 

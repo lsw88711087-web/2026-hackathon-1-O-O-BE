@@ -144,7 +144,13 @@ def _ratios(products: list[Product], axis: str) -> dict[str, float]:
         return {}
     counts: dict[str, int] = {}
     for product in products:
+        # 빈 축은 "이 값이다"가 아니라 "아직 모른다"는 뜻이다. 상품 데이터가 덜 채워진
+        # 단(악세서리·의류)이 있어 실제로 절반 가까이 비어 있는데, 이걸 하나의 값으로
+        # 세면 취향 벡터에 ''가 최빈값으로 남는다. 분모는 그대로 둬서 근거가 적을수록
+        # 비율이 낮게 나오게 한다 — 단서가 적으면 판정을 보류하는 쪽이 맞다.
         value = getattr(product, axis)
+        if not value:
+            continue
         counts[value] = counts.get(value, 0) + 1
     return {value: count / len(products) for value, count in counts.items()}
 

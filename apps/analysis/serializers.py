@@ -24,3 +24,23 @@ class FinishResponseSerializer(serializers.Serializer):
         "rejected가 0이 아니면 버퍼가 한 번에 저장하는 수를 넘긴 것이므로, "
         "다음부터는 /finish 전에 /events로 미리 비워야 한다"
     )
+
+
+class ReportDetailSerializer(serializers.Serializer):
+    """박제된 리포트. status가 ready일 때만 나머지 필드가 들어 있다.
+
+    payload를 재계산하지 않고 그대로 흘려보내므로, 몇 번을 열어도 같은 화면이 나온다.
+    """
+
+    status = serializers.CharField(help_text="pending / ready / failed")
+    character = serializers.DictField(required=False, help_text="type_code · name · one_liner")
+    top_keywords = serializers.ListField(required=False)
+    summary = serializers.CharField(required=False)
+    hero = serializers.DictField(required=False, allow_null=True, help_text="가장 잘 맞는 상품 1개")
+    recommendations = serializers.ListField(required=False)
+    interested = serializers.ListField(required=False)
+    confidence = serializers.FloatField(required=False, help_text="0~1")
+    is_exploring = serializers.BooleanField(
+        required=False, help_text="true면 신호가 적어 '탐색 중'으로 표시한다. 프론트는 이 값으로 분기한다"
+    )
+    visit_summary = serializers.DictField(required=False)

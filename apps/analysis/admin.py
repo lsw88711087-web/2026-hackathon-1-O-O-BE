@@ -7,8 +7,8 @@ from apps.analysis.models import Character, Report
 
 @admin.register(Character)
 class CharacterAdmin(admin.ModelAdmin):
-    list_display = ("type_code", "name", "one_liner", "image_url")
-    list_editable = ("name", "one_liner", "image_url")
+    list_display = ("type_code", "name", "one_liner")
+    list_editable = ("name", "one_liner")
     ordering = ("type_code",)
 
 

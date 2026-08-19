@@ -172,7 +172,7 @@ CHAT_TIMELINE_LIMIT = 200  # GET /chat/messages가 한 번에 주는 최대 메�
 
 # 화보 생성 진행 상태는 휘발성이라 DB가 아니라 캐시에 둔다. 폴링이 화보당 8~9번이라
 # 그대로 DB에 붙이면 전부 같은 답을 가져오는 조회가 초당 수십 번 발생한다.
-# ⚠️ LocMem은 프로세스마다 따로 논다. uvicorn을 --workers 2 이상으로 띄우면 폴링이
+# ⚠️ LocMem은 프로세스마다 따로 논다. gunicorn을 --workers 2 이상으로 띄우면 폴링이
 #    다른 프로세스에 붙어 404가 나므로, 배포에서는 REDIS_URL을 반드시 채운다.
 REDIS_URL = env("REDIS_URL", default="")
 CACHES = {
@@ -192,21 +192,56 @@ LOOKBOOK_FAKE_DELAY_SEC = env.int("LOOKBOOK_FAKE_DELAY_SEC", default=8)
 # 화보에 찍히는 고정 문구. 생성 시점에 스냅샷으로 복사되므로 나중에 바꿔도 옛 화보는 그대로다.
 LOOKBOOK_VENUE = env("LOOKBOOK_VENUE", default="MCM HAUS SEOUL")
 LOOKBOOK_SEASON = env("LOOKBOOK_SEASON", default="2026 F/W")
-LOOKBOOK_IMAGE_SIZE = (1080, 1350)  # 인스타그램 세로 비율
+LOOKBOOK_IMAGE_SIZE = (1080, 1350)  # 인스타그램 세로 비율. FAKE 결과에만 쓴다
+
+# --- 이미지 생성 벤더 ---
+LOOKBOOK_IMAGE_MODEL = env("LOOKBOOK_IMAGE_MODEL", default="gpt-image-2")
+# 벤더가 받는 값은 변의 길이가 16의 배수여야 한다. 1080x1350은 조건에 안 맞아서
+# 같은 4:5 비율인 1024x1280을 쓴다. 실제 크기는 결과 이미지에서 다시 읽는다.
+LOOKBOOK_GEN_SIZE = env("LOOKBOOK_GEN_SIZE", default="1024x1280")
+# 25초 걸리는 호출이다. common/llm.py의 20초를 그대로 쓰면 매번 타임아웃이 난다.
+LOOKBOOK_GEN_TIMEOUT_SEC = env.int("LOOKBOOK_GEN_TIMEOUT_SEC", default=120)
+# 비용이 여기서 갈린다. low $0.005 / medium $0.041 / high $0.165 (장당).
+# 벤더 기본값에 맡기면 high로 잡혀 재생성 3회 × 관람객 수만큼 곱해진다.
+LOOKBOOK_GEN_QUALITY = env("LOOKBOOK_GEN_QUALITY", default="medium")
+# gpt-image-2는 input_fidelity를 받지 않는다 — 입력 이미지를 항상 고품질로 처리한다.
+# 넘기면 400 invalid_input_fidelity_model로 죽으므로 아예 보내지 않는다.
+# 마스크 극성 뒤집기. 인물이 지워지고 배경만 남으면 이 값을 True로 바꾼다.
+# 프론트 실루엣의 흑백이 반대로 올 수 있어서 배포 없이 되돌릴 손잡이를 남긴다.
+LOOKBOOK_MASK_INVERT = env.bool("LOOKBOOK_MASK_INVERT", default=False)
+# cutout : 마스크로 인물만 오려 배경판에 얹는다. 벤더 호출이 없어 공짜·즉시·왜곡 없음.
+# ai     : 벤더가 배경까지 새로 그린다. 느리고 비싸고 한도에 걸린다.
+LOOKBOOK_COMPOSE_MODE = env("LOOKBOOK_COMPOSE_MODE", default="cutout")
 
 # 업로드 — 사진 바이트는 Django를 지나가지 않는다. 서버는 presign URL만 발급한다.
 PHOTO_MAX_BYTES = 5 * 1024 * 1024
 UPLOAD_URL_TTL_SEC = 600
-# 버킷이 정해지기 전까지는 dev. 계약(키·URL·만료)은 그대로 확인되지만 실제 PUT은 받지 않는다.
-# 버킷이 생기면 STORAGE_BACKEND=s3 + 아래 4개를 .env에 넣으면 된다 (R2는 S3 호환 API).
-# ⚠️ 그때 버킷 CORS(PUT·GET)를 반드시 열 것. 로컬은 same-origin이라 안 걸리고 배포 후에 터진다.
-STORAGE_BACKEND = env("STORAGE_BACKEND", default="dev")
+# local  버킷이 없을 때. Django가 PUT을 직접 받아 UPLOAD_LOCAL_ROOT에 쓴다.
+#        presign 응답 형식은 s3와 완전히 같다 — 프론트는 이 셋 중 뭘 쓰는지 알 필요가 없다.
+# s3     R2·S3. 버킷이 생기면 이 값만 바꾸면 되고 코드는 안 고친다.
+# dev    URL만 발급하고 실제로는 아무것도 받지 않는다(uploads.invalid). 계약 확인 전용.
+# ⚠️ s3로 넘어갈 때 버킷 CORS(PUT·GET)를 반드시 열 것. 로컬은 same-origin이라 안 걸리고
+#    배포하고 나서야 터진다.
+STORAGE_BACKEND = env("STORAGE_BACKEND", default="local")
 STORAGE_ENDPOINT_URL = env("STORAGE_ENDPOINT_URL", default="")
 STORAGE_BUCKET = env("STORAGE_BUCKET", default="")
 STORAGE_REGION = env("STORAGE_REGION", default="auto")
 STORAGE_ACCESS_KEY = env("STORAGE_ACCESS_KEY", default="")
 STORAGE_SECRET_KEY = env("STORAGE_SECRET_KEY", default="")
 UPLOAD_DEV_BASE_URL = env("UPLOAD_DEV_BASE_URL", default="https://uploads.invalid/dev")
+
+# local 백엔드가 사진을 쓰는 곳. **MEDIA_ROOT 아래가 아니다.**
+# nginx가 /media/를 통째로 공개 서빙하므로(deploy/nginx.conf) 거기 두면 얼굴 사진이
+# 키만 알면 열린다. 명세의 `photos/ 비공개, 워커만 접근`을 지키려고 밖으로 뺐다.
+UPLOAD_LOCAL_ROOT = env("UPLOAD_LOCAL_ROOT", default=str(BASE_DIR / "uploads"))
+# presign URL의 host. 평소에는 요청의 scheme+host를 그대로 쓰므로 비워둔다.
+# 요청 컨텍스트가 없는 곳(관리 명령 등)에서만 이 값이 쓰인다.
+UPLOAD_LOCAL_BASE_URL = env("UPLOAD_LOCAL_BASE_URL", default="http://localhost:8000")
+# s3에서 완성 화보를 공개 서빙할 주소(R2 public bucket · CDN). 비우면 키만 돌려준다.
+STORAGE_PUBLIC_BASE_URL = env("STORAGE_PUBLIC_BASE_URL", default="")
+# 얼굴 사진 보존 기간. 명세대로 파일 나이만 보고 지운다 — presign만 받고 이탈한 사진은
+# DB에 행이 없어서 배치가 못 찾기 때문이다. `manage.py purge_uploads`를 하루 한 번 돌린다.
+UPLOAD_RETENTION_HOURS = 24
 
 LOGGING = {
     "version": 1,

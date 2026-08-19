@@ -28,6 +28,7 @@ PRODUCT_FIELDS = (
     "external_url",
     "story",
     "images",
+    "cutout_url",
     "category",
     "color",
     "material",

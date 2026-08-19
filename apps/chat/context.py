@@ -13,6 +13,9 @@ from apps.chat.models import Role
 from apps.chat.prompts import (
     CANDIDATE_HEADER,
     CONTEXT_HEADER,
+    GUARDRAIL_PROMPT,
+    NO_CANDIDATE_NOTE,
+    STORE_SCOPE_HEADER,
     SYSTEM_PROMPT,
     TASTE_HEADER,
     TIMELINE_HEADER,
@@ -43,14 +46,21 @@ def build_messages(
     taste = taste if taste is not None else taste_module.read(visit)
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    messages.append({"role": "system", "content": _describe_store(visit)})
     if product is not None:
         messages.append({"role": "system", "content": _describe(product)})
     if summary := _describe_taste(taste):
         messages.append({"role": "system", "content": summary})
     if candidates:
         messages.append({"role": "system", "content": _describe_candidates(candidates)})
+    elif product is None:
+        # 지목할 상품이 하나도 없는 상태. 빈칸을 두면 모델이 지어낸다.
+        messages.append({"role": "system", "content": NO_CANDIDATE_NOTE})
     messages.append({"role": "system", "content": _describe_visitor(visit)})
     messages.extend(_recent_turns(visit))
+    # 가드레일은 질문 바로 앞에 둔다. 타임라인이 길어지면 앞선 지시가 흐려지고,
+    # 조작 문장은 대개 이번 질문 안에 들어온다.
+    messages.append({"role": "system", "content": GUARDRAIL_PROMPT})
     messages.append({"role": "user", "content": question})
     return messages
 
@@ -79,6 +89,26 @@ def _describe_candidates(candidates: list[Suggestion]) -> str:
     return f"{CANDIDATE_HEADER}\n" + "\n".join(lines)
 
 
+def _describe_store(visit: Visit) -> str:
+    """매장의 실제 범위. 상품 문맥과 추천 후보가 모두 없을 때 유일한 사실 근거가 된다.
+
+    이게 없으면 모델이 빈칸을 사전지식으로 채운다 — 다른 브랜드 상품과 없는 진열대
+    번호가 나온다. 명품 매장에서 즉시 사고가 되는 종류의 오답이다.
+    """
+    scenes = list(visit.store.scenes.prefetch_related("products"))
+    categories = sorted(
+        {product.get_category_display() for scene in scenes for product in scene.products.all()}
+    )
+    lines = [
+        STORE_SCOPE_HEADER,
+        f"- 매장 이름: {visit.store.name}",
+        "- 진열대: " + " · ".join(f"{scene.no}번 {scene.name}" for scene in scenes),
+        "- 취급 분류: " + (" · ".join(categories) if categories else "준비 중"),
+        "- 위에 없는 브랜드·상품·진열대 번호는 이 매장에 없습니다.",
+    ]
+    return "\n".join(lines)
+
+
 def _target_product(context: dict) -> Product | None:
     product_id = context.get("product_id")
     if not product_id:
@@ -104,6 +134,10 @@ def _describe(product: Product) -> str:
         f"{product.get_pattern_display()} / {product.get_silhouette_display()} / "
         f"{product.get_mood_display()} / {product.get_use_case_display()}",
     ]
+    # attributes는 브랜드가 적어 준 표기값이다(색상·소재·치수·사이즈). 분석 축은
+    # "그레인 레더"처럼 뭉뚱그린 분류라, 실제 소재명과 치수는 여기에만 있다.
+    # 이게 빠지면 "크기 얼마예요?"에 DB를 두고도 직원에게 물어보라고 답한다.
+    lines += [f"- {key}: {value}" for key, value in product.attributes.items() if value]
     lines += [
         f"- {PresetKey(key).label}: {answer}"
         for key, answer in product.preset_answers.items()

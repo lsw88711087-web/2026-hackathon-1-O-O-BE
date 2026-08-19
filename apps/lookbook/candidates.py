@@ -18,8 +18,12 @@ PREFERENCE_TAGS_KEY = "preference_tags"
 AVOID_TAGS_KEY = "avoid_tags"
 
 
-def build(report: Report) -> dict:
-    """P01 응답 본문. items는 항상 정확히 6개다."""
+def build(report: Report, request) -> dict:
+    """P01 응답 본문. items는 항상 정확히 6개다.
+
+    request를 받는 이유는 이미지 URL을 절대 주소로 내보내기 위해서다 — 프론트가
+    다른 도메인이라 상대 경로를 주면 자기 사이트에서 찾다가 404가 난다.
+    """
     visit = report.visit
     products = list(Product.objects.select_related("scene"))
     signals = _collect_signals(visit, products)
@@ -29,7 +33,7 @@ def build(report: Report) -> dict:
     ranked = scoring.rank(scored, fillers)
 
     products_by_id = {product.id: product for product in products}
-    items = [_item(products_by_id[item.product_id], item) for item in ranked]
+    items = [_item(products_by_id[item.product_id], item, request) for item in ranked]
 
     return {
         "max_select": scoring.MAX_SELECT,
@@ -127,13 +131,13 @@ def _fillers(products: list[Product], signals: dict[str, ProductSignals]) -> lis
     ]
 
 
-def _item(product: Product, scored: ScoredCandidate) -> dict:
+def _item(product: Product, scored: ScoredCandidate, request) -> dict:
     return {
         "product_id": product.id,
         "name": product.name,
         "category": axis_label("category", product.category),
-        "thumbnail": product.thumbnail,
-        "cutout_url": product.cutout_url,
+        "thumbnail": request.build_absolute_uri(product.thumbnail) if product.thumbnail else None,
+        "cutout_url": request.build_absolute_uri(product.cutout_url) if product.cutout_url else "",
         "score": scored.score,
         "reason_code": scored.reason_code,
         "reason": scored.reason,

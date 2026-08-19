@@ -1,12 +1,36 @@
+# O&O 백엔드 의존성
+#
+# 서버 배포:  pip install -r requirements.txt
+# 로컬 개발:  같은 파일을 쓴다. gunicorn은 Windows에서 설치는 되지만 실행되지 않으므로,
+#            로컬에서는 `manage.py runserver`를 쓰고 SSE 확인만 Linux/서버에서 한다.
+#
+# 버전을 핀으로 고정한 이유: 데모 전날 `pip install`이 최신 버전을 끌어와 깨지는 것을 막는다.
+
+# --- 프레임워크 ---
 Django==5.1.5
 djangorestframework==3.15.2
-djangorestframework-simplejwt==5.3.1
-drf-spectacular==0.28.0
-django-cors-headers==4.6.0
-django-environ==0.12.0
-openai==1.59.6
-uvicorn==0.34.0
+djangorestframework-simplejwt==5.3.1   # /admin/* Bearer 토큰
+drf-spectacular==0.28.0                # /api/schema/swagger-ui/
+django-cors-headers==4.6.0             # Netlify 프론트에서 호출
+django-environ==0.12.0                 # .env 로딩, DATABASE_URL 파싱
+
+# --- 배포 런타임 ---
+# WSGI로 띄운다. 챗봇 SSE가 동기 제너레이터라 ASGI에서는 Django가 전부 소비한 뒤
+# 내보내서 스트리밍이 죽는다(django/http/response.py __aiter__).
+gunicorn==23.0.0
+whitenoise==6.8.2                      # nginx가 없을 때 정적 파일 폴백
+psycopg[binary]==3.2.3                 # PostgreSQL 드라이버 (DATABASE_URL)
+redis==5.2.1                           # 화보 폴링 캐시 (REDIS_URL)
+
+# --- 외부 서비스 ---
+openai==3.3.0                          # 챗봇 SSE + 리포트 취향 추출 + 화보 이미지 편집
+# 이미지 편집은 사진·마스크·레퍼런스를 한 요청에 넣는다. 구 SDK(1.x)의 images.edit는
+# 이미지 1장 + 정사각형만 받아서 레퍼런스를 붙일 수 없다. 3.x가 필요한 이유가 이것이다.
+Pillow==12.3.0                         # 마스크 알파 변환, 크기 정합, 결과 크기 측정
+# 사진·마스크 업로드(STORAGE_BACKEND=s3). storage.py가 직접 import하므로
+# 빼두면 버킷을 붙이는 순간 ImportError로 죽는다.
+boto3==1.35.99
+
+# --- 개발 도구 ---
+# 서버에도 함께 설치되지만 용량이 작아 파일을 나누지 않는다.
 ruff==0.16.2
-psycopg[binary]==3.2.3
-redis==5.2.1
-whitenoise==6.8.2

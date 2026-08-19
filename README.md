@@ -25,11 +25,15 @@ python manage.py migrate
 python manage.py runserver
 ```
 
-SSE(챗봇 스트리밍)를 실제 환경에서 확인할 때는 ASGI로 띄운다.
+SSE(챗봇 스트리밍)를 배포와 같은 조건에서 확인할 때는 gunicorn으로 띄운다.
 
 ```bash
-uvicorn config.asgi:application --reload
+gunicorn config.wsgi:application --bind 127.0.0.1:8000 --worker-class gthread --workers 2 --threads 4 --timeout 300
 ```
+
+⚠️ **uvicorn(ASGI)으로 띄우면 스트리밍이 죽는다.** `respond()`가 동기 제너레이터라
+Django가 `sync_to_async(list)`로 전부 소비한 뒤 내보낸다(응답은 200인데 조각이 안 흐른다).
+`async def` + `async for`로 바꾸기 전까지는 WSGI가 맞다.
 
 브라우저에서 `http://127.0.0.1:8000/api/schema/swagger-ui/` 확인.
 

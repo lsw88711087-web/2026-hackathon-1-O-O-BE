@@ -4,29 +4,39 @@
 #   sudo systemctl daemon-reload
 #   sudo systemctl enable --now oando
 #
-# 왜 uvicorn(ASGI)인가: 챗봇이 SSE로 스트리밍한다. WSGI로도 동작하지만
-# ASGI가 스트리밍 응답을 훨씬 자연스럽게 흘려보낸다.
+# 왜 uvicorn(ASGI)이 아니라 gunicorn(WSGI)인가:
+#   챗봇 SSE가 동기 제너레이터(def respond() -> Iterator[str])다. Django는 ASGI에서
+#   동기 이터레이터를 만나면 sync_to_async(list)로 **전부 소비한 뒤** 내보낸다
+#   (django/http/response.py __aiter__). 즉 uvicorn으로 띄우면 스트리밍이 죽고
+#   답변이 한 번에 나간다. respond()를 async로 바꾸기 전까지는 WSGI가 맞다.
 #
-# 왜 워커 1개인가: 리포트 생성이 threading.Thread로 돌고 DB는 SQLite다.
-# SQLite는 쓰기가 DB 전체를 잠그므로, 프로세스를 늘리면 각자 스레드를 돌려
-# 쓰기 경합만 늘어난다. 2vCore + 데모 트래픽에는 1개로 충분하다.
+# 왜 gthread인가: SSE 응답 하나가 스레드 하나를 붙잡는다. sync 워커면 그 시간 동안
+#   프로세스가 통째로 막힌다.
+#
+# 워커 2 x 스레드 4 = 동시 8. 2vCore + 데모 트래픽에 충분하다.
+# ⚠️ 워커가 2개 이상이면 화보 폴링 상태를 프로세스마다 따로 들고 있게 되므로
+#    .env의 REDIS_URL을 반드시 채운다(비면 폴링이 404가 난다).
 
 [Unit]
-Description=O&O backend (uvicorn)
-After=network.target
+Description=O&O backend (gunicorn)
+After=network.target postgresql.service redis-server.service
 
 [Service]
 Type=simple
-User=ubuntu
+User=oando
+Group=oando
 WorkingDirectory=/srv/oando
 # .env는 systemd가 아니라 settings.py의 django-environ이 직접 읽는다.
 # EnvironmentFile로 중복해서 읽히면 따옴표·주석 처리 방식이 달라 값이 깨진다.
-ExecStart=/srv/oando/venv/bin/uvicorn config.asgi:application \
-    --host 127.0.0.1 \
-    --port 8000 \
-    --workers 1 \
-    --proxy-headers \
-    --forwarded-allow-ips='127.0.0.1'
+ExecStart=/srv/oando/venv/bin/gunicorn config.wsgi:application \
+    --bind 127.0.0.1:8000 \
+    --worker-class gthread \
+    --workers 2 \
+    --threads 4 \
+    --timeout 300 \
+    --graceful-timeout 30 \
+    --access-logfile - \
+    --error-logfile -
 Restart=always
 RestartSec=3
 StandardOutput=journal

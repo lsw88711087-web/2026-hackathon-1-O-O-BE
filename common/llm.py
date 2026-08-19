@@ -3,6 +3,7 @@
 키는 환경변수에서만 읽고, 앱 코드는 OpenAI SDK를 직접 import하지 않는다.
 """
 
+import json
 import logging
 from collections.abc import Iterator
 
@@ -44,4 +45,27 @@ def stream(messages: list[dict]) -> Iterator[str]:
                 yield delta
     except OpenAIError as error:
         logger.exception("LLM 스트리밍 실패: %s", error)
+        raise LLMUnavailable() from error
+
+
+def complete_json(system_prompt: str, user_prompt: str) -> dict:
+    """JSON 하나를 받아온다. 리포트 워커가 쓴다.
+
+    챗봇은 첫 글자가 빨리 떠야 해서 stream()을 쓰지만, 워커는 사용자가 화면을
+    보고 있지 않으므로 완성된 결과만 있으면 된다. 조각을 모아 붙일 이유가 없다.
+    """
+    try:
+        response = _client().chat.completions.create(
+            model=settings.OPENAI_MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            max_tokens=MAX_OUTPUT_TOKENS,
+            response_format={"type": "json_object"},
+        )
+        return json.loads(response.choices[0].message.content)
+    except (OpenAIError, ValueError) as error:
+        # ValueError는 JSON 파싱 실패. 둘 다 "결과를 못 받았다"로 같게 다룬다.
+        logger.exception("LLM JSON 응답 실패: %s", error)
         raise LLMUnavailable() from error
